@@ -4,6 +4,7 @@ import unittest
 
 from model import (Block, FixedEvent, Preference, Task, hour_range, to_slot)
 from parser.parser import ParseError, parse
+from tests.parser_cases import CASES
 
 DAYS = range(7)
 
@@ -156,6 +157,20 @@ class TestErrors(unittest.TestCase):
 
     def test_do_not_schedule_must_be_complete(self):
         self.assertEqual(self.fail("do not schedule after 9pm").token.text, "not")
+
+
+class TestCaseList(unittest.TestCase):
+    # every sentence in parser_cases.py: expected rules, or rejection.
+    def test_cases(self):
+        self.assertGreaterEqual(len(CASES), 15)
+        self.assertGreaterEqual(sum(1 for _, rules in CASES if rules is None), 3)
+        for text, expected in CASES:
+            with self.subTest(text=text):
+                if expected is None:
+                    with self.assertRaises(ParseError):
+                        parse(text)
+                else:
+                    self.assertEqual(parse(text), expected)
 
 
 if __name__ == "__main__":
