@@ -17,10 +17,11 @@ placements as a tuple lined up with the list of copies, so the caller builds
 this with dict(zip(copies, placements)).
 """
 
-from model import DAY_NAMES, FIRST_HOUR, HOURS_PER_DAY, NUM_DAYS, to_slot
+from model import (DAY_NAMES, FIRST_HOUR, HOURS_PER_DAY, NUM_DAYS, Block,
+                   FixedEvent, Preference, Task, from_slot, to_slot)
 
-CELL_WIDTH = 11       # characters per day column: "[N] " mark + up to 7 name letters
-NAME_WIDTH = CELL_WIDTH - 4
+CELL_WIDTH = 11       # characters per day column: "[N] " mark, up to 6 name letters, 1 gap
+NAME_WIDTH = CELL_WIDTH - 5
 LABEL_WIDTH = 5       # characters for the hour label column ("12pm ")
 
 
@@ -109,3 +110,76 @@ def print_schedule(result, fixed_events, blocks, placements=None, old_placements
         print(render_grid(fixed_events, blocks, placements, old_placements))
         print()
     print(render_stats(result))
+
+
+# ------------------------------------------------------- describing the rules
+# these turn parsed rules into short sentences, so the command-line loop can
+# show the user what it understood.
+
+# join consecutive hours into runs of (start_hour, end_hour_exclusive).
+# [9, 10, 11, 14] -> [(9, 12), (14, 15)]
+def hour_runs(hours):
+    runs = []
+    for hour in sorted(hours):
+        if runs and runs[-1][1] == hour:
+            runs[-1] = (runs[-1][0], hour + 1)
+        else:
+            runs.append((hour, hour + 1))
+    return runs
+
+
+# a list of day numbers as text. all seven days is "every day"; three or more
+# days in a row are shortened to a range ("Mon-Fri"); the rest are listed.
+def format_days(days):
+    days = sorted(days)
+    if len(days) == NUM_DAYS:
+        return "every day"
+    pieces, i = [], 0
+    while i < len(days):
+        j = i
+        while j + 1 < len(days) and days[j + 1] == days[j] + 1:
+            j += 1
+        if j - i >= 2:
+            pieces.append(f"{DAY_NAMES[days[i]]}-{DAY_NAMES[days[j]]}")
+        else:
+            pieces.extend(DAY_NAMES[d] for d in days[i:j + 1])
+        i = j + 1
+    return ", ".join(pieces)
+
+
+# a set of slots as text, e.g. "Mon-Fri 9pm-10pm" or "Tue 7am-12pm".
+# steps: collect the hours used on each day, turn them into runs, then group
+# days that have identical runs so "every day 9pm-10pm" is one phrase and not
+# seven.
+def describe_slots(slots):
+    hours_by_day = {}
+    for slot in slots:
+        day, hour = from_slot(slot)
+        hours_by_day.setdefault(day, []).append(hour)
+    groups = {}
+    for day, hours in hours_by_day.items():
+        groups.setdefault(tuple(hour_runs(hours)), []).append(day)
+    parts = []
+    for runs, days in groups.items():
+        if runs == ((FIRST_HOUR, FIRST_HOUR + HOURS_PER_DAY),):
+            when = "all day"
+        else:
+            when = ", ".join(f"{hour_label(a)}-{hour_label(b)}" for a, b in runs)
+        parts.append(f"{format_days(days)} {when}")
+    return "; ".join(parts) if parts else "no hours at all"
+
+
+# one rule as a short sentence for the "understood" list.
+def describe_rule(rule):
+    if isinstance(rule, Task):
+        times = "once" if rule.count == 1 else f"{rule.count} times"
+        hours = "1 hour" if rule.duration == 1 else f"{rule.duration} hours"
+        return f"task: {rule.name}, {times}, {hours} each"
+    if isinstance(rule, Block):
+        return f"block (nothing scheduled): {describe_slots(rule.slots)}"
+    if isinstance(rule, Preference):
+        return (f"preference: {rule.task_name} preferably {describe_slots(rule.good_slots)}"
+                f" (penalty {rule.penalty} otherwise)")
+    if isinstance(rule, FixedEvent):
+        return f"fixed event: {rule.name}, {describe_slots(rule.slots)}"
+    return str(rule)
